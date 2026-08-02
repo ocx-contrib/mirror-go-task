@@ -1,0 +1,109 @@
+extends: ../mirror-base.yml
+
+name: task
+
+# Logical index package `go-task/task` at the physical path
+# `ghcr.io/ocx-contrib/go-task/task` — slash segments, never hyphen-flattened.
+# The first segment must be this repo's own GitHub owner: GITHUB_TOKEN only
+# authorises packages owned by the repo the workflow runs in.
+#
+# The package segment is the publish-name: upstream's repo is `go-task/task`
+# and the binary it ships is `task`, so the namespace takes the org and the
+# package takes the tool.
+#
+# Succeeds the flat `ocx.sh/go-task` coordinate this repository published
+# before the grouped layout, the same way mirror-kitware/cmake succeeds
+# mirror-cmake.
+target:
+  registry: ghcr.io
+  repository: ocx-contrib/go-task/task
+
+source:
+  type: github_release
+  owner: go-task
+  repo: task
+  tag_pattern: "^v(?P<version>\\d+\\.\\d+\\.\\d+)$"
+
+# ─── libc gate (Phase 3.5) — the evidence, not the conclusion ───────────────
+#
+# Task is a pure-Go binary built without cgo, so upstream ships ONE Linux build
+# per arch and it is fully static. Measured on v3.52.0:
+#
+#   $ file task            # from task_linux_amd64.tar.gz
+#   ELF 64-bit LSB executable, x86-64, statically linked, Go BuildID=…, stripped
+#   $ readelf -l … | grep INTERP  → (none)
+#   $ readelf -d … | grep NEEDED  → (none)
+#   $ file task            # from task_linux_arm64.tar.gz
+#   ELF 64-bit LSB executable, ARM aarch64, statically linked, …
+#
+# No PT_INTERP and no DT_NEEDED means the artifact requires nothing of the
+# host, so both Linux keys are BARE — no `+libc.*` suffix. Upstream publishes
+# no musl/alpine variant of the tarball, so there is no counterpart to split
+# against. Container legs (ubuntu + alpine + fedora) live in ../mirror-base.yml
+# and are what turn that claim into evidence.
+#
+# ─── Scope (verified across every in-range release, v3.49.1 … v3.52.0)
+#
+# Upstream also publishes, and this mirror deliberately does not carry:
+#   task_linux_{386,arm,riscv64}.tar.gz          — no GHA runner
+#   task_freebsd_*.tar.gz                        — no GHA runner
+#   task_windows_386.zip                         — no GHA runner
+#   task_<ver>_linux_*.{deb,rpm,apk}             — distro installers, not bundles
+#   task_checksums.txt                           — sidecar
+#
+# The anchored ^…$ regexes are what keep those out — `^task_linux_arm64\.tar\.gz$`
+# does not match the 32-bit `task_linux_arm.tar.gz`, and the leading `task_`
+# anchor excludes the version-stamped `task_3.52.0_linux_amd64.deb` family.
+# Resolution verified BOTH ways across EVERY in-range release: each of the six
+# patterns matches EXACTLY one asset. A pattern matching zero is silently
+# skipped, not an error — it would yield a green run with a missing platform.
+assets:
+  linux/amd64:
+    - "^task_linux_amd64\\.tar\\.gz$"
+  linux/arm64:
+    - "^task_linux_arm64\\.tar\\.gz$"
+  darwin/amd64:
+    - "^task_darwin_amd64\\.tar\\.gz$"
+  darwin/arm64:
+    - "^task_darwin_arm64\\.tar\\.gz$"
+  windows/amd64:
+    - "^task_windows_amd64\\.zip$"
+  windows/arm64:
+    - "^task_windows_arm64\\.zip$"
+
+asset_type:
+  # The archive holds `task` FLAT at its root, beside LICENSE, README.md and a
+  # completion/ directory — there is no leading version/platform directory to
+  # peel, so nothing is stripped. `task` therefore lands at the content root
+  # and PATH is a bare ${installPath}; see `bin_scan` in ../mirror-base.yml.
+  type: archive
+  strip_components: 0
+
+metadata:
+  default: metadata.json
+
+catalog:
+  logo: logo.svg
+
+versions:
+  min: "3.49.1"
+  new_per_run: 5
+  poll_interval: "0 */6 * * *"
+
+tests:
+  # `script:` resolves from the REPOSITORY ROOT — unlike `metadata.default` and
+  # `catalog.logo` above, which resolve against this spec's own directory.
+  - name: smoke
+    script: task/tests/smoke.star
+
+annotations:
+  # From the Phase 1.5 license gate:
+  #   $ gh api repos/go-task/task/license --jq '.license.spdx_id'
+  #   MIT
+  org.opencontainers.image.licenses: "MIT"
+
+announce:
+  # Spelled out, not derived from target.repository — the logical name and the
+  # physical path are related by convention only.
+  package: go-task/task
+  fork: ocx-contrib/index
